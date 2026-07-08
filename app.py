@@ -8,101 +8,105 @@ from grading_engine import GradingEngine
 # ==================== 網頁頁面設定 ====================
 st.set_page_config(page_title="AI 智慧考卷批改系統", layout="wide", page_icon="📝")
 st.title("📝 AI 智慧考卷批改系統")
-st.caption("請輸入考卷設定與學生資料夾路徑，系統將自動執行 OCR 辨識與 AI 批改。")
 
-# ==================== 主頁面佈局：兩欄式輸入 ====================
 col1, col2 = st.columns(2)
-
 with col1:
     st.subheader("📌 考試題目與評分標準設定")
     exam_question = st.text_area("1. 請輸入考試題目內容：", height=150, placeholder="例如：\nQ1. 請證明切爾諾夫界限 (Chernoff Bound)...")
     rubric_and_answer = st.text_area("2. 請輸入參考答案與評分標準：", height=350, placeholder="例如：\n### Q1 評分標準 (10分)\n- 定義隨機變數得 2 分...")
 
 with col2:
-    st.subheader("📂 學生資料處理設定")
-    root_dir = st.text_input("請輸入伺服器/電腦上的「總資料夾路徑」：", value="./")
+    st.subheader("📂 學生資料與輸出設定")
     
-    # 優化選項
-    skip_ocr = st.checkbox("如果 `{學號}.txt` 已存在，跳過文字辨識 (加速處理)", value=True)
-    skip_grade = st.checkbox("如果 `_批改結果.txt` 已存在，跳過批改 (中斷續傳)", value=True)
+    # 🚀 改回舊版：讓使用者直接手動輸入/貼上完整路徑
+    st.markdown("**1. 請輸入學生原始總資料夾的絕對路徑：**")
+    root_dir = st.text_input(
+        "學生總資料夾路徑：", 
+        value="", 
+        placeholder="例如：/Users/weijeliu/Desktop/code/GradeAI/學生考卷",
+        label_visibility="collapsed"
+    )
+    st.caption("💡 請複製電腦中該資料夾的完整路徑並貼到上方。")
+    st.markdown("---")
+    
+    st.markdown("**2. 設定統一輸出資料夾名稱：**")
+    output_dir_name = st.text_input("請輸入輸出資料夾名稱：", value="批改結果總表")
+    st.caption("💡 系統會自動在與上述學生資料夾「平行」的位置創立此資料夾。")
+    
+    st.markdown("---")
+    st.markdown("**3. 執行優化設定：**")
+    skip_processed = st.checkbox("如果批改紀錄已存在，跳過該學生 (中斷續傳)", value=True)
 
 st.markdown("---")
 
-# ==================== 按鈕觸發與核心調度邏輯 ====================
+# ==================== 核心調度邏輯 ====================
 if st.button("🚀 開始批次辨識與批改流水線", type="primary", use_container_width=True):
-    if not exam_question.strip() or not rubric_and_answer.strip():
-        st.warning("⚠️ 請填寫題目與評分標準再執行。")
+    if not exam_question.strip() or not rubric_and_answer.strip() or not root_dir.strip() or not output_dir_name.strip():
+        st.warning("⚠️ 請檢查所有欄位是否皆已填寫（包含學生資料夾路徑）。")
     else:
         try:
-            # 1. 掃描資料夾
+            # 初始化後端引擎
+            engine = GradingEngine()
+            # 讀取學生子目錄
             subdirs = FileHandler.get_student_directories(root_dir)
             
             if not subdirs:
-                st.warning(f"⚠️ 在路徑「{root_dir}」下沒有找到任何學生子資料夾。")
+                st.warning(f"⚠️ 在該路徑下找不到任何學生子資料夾。")
             else:
-                st.success(f"📂 成功找到 {len(subdirs)} 個學生的資料夾...")
-                
-                # 2. 初始化 AI 批改引擎（引擎會自己去抓環境變數的 Key，若找不到會報錯）
-                engine = GradingEngine()
-                
-                # 3. 畫面進度與日誌容器
+                st.success(f"📂 成功找到 {len(subdirs)} 個學生的資料夾，開始流水線處理...")
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 log_container = st.expander("詳細執行日誌 (Log Stream)", expanded=True)
                 
-                # 4. 開始批次處理
                 for index, student_id in enumerate(subdirs):
-                    student_folder, ocr_txt_path, grade_txt_path = FileHandler.prepare_student_paths(root_dir, student_id)
                     status_text.text(f"⏳ 正在處理學生 ({index+1}/{len(subdirs)}): {student_id}")
                     
-                    # --------- 階段一：圖片轉文字 (OCR) ---------
-                    student_answer_text = ""
-                    if skip_ocr and os.path.exists(ocr_txt_path):
-                        log_container.write(f"⏭️ [OCR] 學號 {student_id} 的文字檔已存在，由本地讀取。")
-                        student_answer_text = FileHandler.read_text_file(ocr_txt_path)
-                    else:
-                        image_files = FileHandler.get_image_files(student_folder)
-                        if not image_files:
-                            log_container.write(f"⚠️ [OCR] 學號 {student_id} 資料夾內找不到任何照片，跳過。")
-                        else:
-                            log_container.write(f"📸 [OCR] 正在辨識學號 {student_id} 的照片...")
-                            try:
-                                base64_list = [FileHandler.encode_image_to_base64(img) for img in image_files]
-                                ocr_result = engine.run_ocr(base64_list)
-                                student_answer_text = ocr_result
-                                FileHandler.write_text_file(ocr_txt_path, ocr_result)
-                                log_container.write(f"  --> ✅ 成功生成 `{student_id}.txt`")
-                            except Exception as e:
-                                log_container.write(f"  ❌ [OCR 失敗] 學號 {student_id} 處理中斷。原因：{e}")
-                                continue
-
-                    # --------- 階段二：AI 評分與批改 ---------
-                    if not student_answer_text:
+                    # 讓 file_handler 處理所有狀態檢查與輸出目錄建立
+                    status, student_folder, output_txt_path, image_files = FileHandler.check_and_prepare_pipeline(
+                        root_dir, output_dir_name, student_id, skip_processed
+                    )
+                    
+                    if status == "SKIP":
+                        log_container.write(f"⏭️ [跳過] 學號 {student_id} 的批改檔案已存在。")
+                        progress_bar.progress((index + 1) / len(subdirs))
                         continue
                         
-                    if skip_grade and os.path.exists(grade_txt_path):
-                        log_container.write(f"⏭️ [批改] 學號 {student_id} 的批改結果已存在，跳過。")
+                    student_answer_text = ""
+                    
+                    if status == "EMPTY":
+                        # 學生沒交照片，給予明確的空白提示，直接送去給 grader 批改
+                        log_container.write(f"⚠️ [空資料夾] 學號 {student_id} 內無照片，將以「未作答」形式送交 AI 評分。")
+                        student_answer_text = "（⚠️ 系統提示：該學生資料夾為空，未提交任何作答圖片內容。）"
                     else:
-                        log_container.write(f"📝 [批改] 正在依據標準批改學號 {student_id} 的考卷...")
+                        # 正常執行 OCR
+                        log_container.write(f"📸 [OCR] 正在辨識學號 {student_id} 的照片...")
                         try:
-                            grade_result = engine.grade_answer(
-                                student_id=student_id,
-                                student_answer=student_answer_text,
-                                exam_question=exam_question,
-                                rubric=rubric_and_answer
-                            )
-                            FileHandler.write_text_file(grade_txt_path, grade_result)
-                            log_container.write(f"  --> ✅ 成功生成 `{student_id}_批改結果.txt`")
-                            time.sleep(1)
+                            base64_list = [FileHandler.encode_image_to_base64(img) for img in image_files]
+                            student_answer_text = engine.run_ocr(base64_list)
                         except Exception as e:
-                            log_container.write(f"  ❌ [批改 失敗] 學號 {student_id} 評分失敗。原因：{e}")
+                            log_container.write(f"  ❌ [OCR 失敗] 學號 {student_id} 原因：{e}")
+                            continue
+
+                    # 統一送交 AI 老師批改
+                    log_container.write(f"📝 [批改] 正在依據標準批改學號 {student_id} 的考卷...")
+                    try:
+                        grade_result = engine.grade_answer(
+                            student_id=student_id,
+                            student_answer=student_answer_text,
+                            exam_question=exam_question,
+                            rubric=rubric_and_answer
+                        )
+                        
+                        combined_content = f"==================================================\n【學生作答辨識內容 (學號: {student_id})】\n==================================================\n{student_answer_text}\n\n==================================================\n【AI 老師批改回饋】\n==================================================\n{grade_result}\n"
+                        FileHandler.write_text_file(output_txt_path, combined_content)
+                        log_container.write(f"  --> ✅ 成功生成紀錄檔：`{student_id}_完整批改紀錄.txt`")
+                        time.sleep(1)
+                    except Exception as e:
+                        log_container.write(f"  ❌ [批改 失敗] 學號 {student_id} 原因：{e}")
                     
                     progress_bar.progress((index + 1) / len(subdirs))
                 
                 status_text.text("🎉 所有考卷處理程序結束！")
                 st.balloons()
-                
-        except ValueError as ve:
-            st.error(str(ve))  # 專門捕捉缺少 API Key 的錯誤並顯示在畫面上
         except Exception as e:
-            st.error(f"💥 系統執行時發生嚴重錯誤: {e}")
+            st.error(f"💥 系統錯誤: {e}")
