@@ -3,6 +3,7 @@
 
 2026*.py
 responses/
+students/
 
 ._*
 .AppleDouble

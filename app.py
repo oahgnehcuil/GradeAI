@@ -12,30 +12,21 @@ st.title("📝 AI 智慧考卷批改系統")
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("📌 考試題目與評分標準設定")
-    exam_question = st.text_area("1. 請輸入考試題目內容：", height=150, placeholder="例如：\nQ1. 請證明切爾諾夫界限 (Chernoff Bound)...")
-    rubric_and_answer = st.text_area("2. 請輸入參考答案與評分標準：", height=350, placeholder="例如：\n### Q1 評分標準 (10分)\n- 定義隨機變數得 2 分...")
+    exam_question = st.text_area("1. 請輸入考試題目內容：", height=150, placeholder="例如：\nQ1. 請證明切爾諾夫界限...")
+    rubric_and_answer = st.text_area("2. 請輸入參考答案與評分標準：", height=350, placeholder="例如：\n### Q1 評分標準...")
 
 with col2:
     st.subheader("📂 學生資料與輸出設定")
-    
-    # 🚀 改回舊版：讓使用者直接手動輸入/貼上完整路徑
     st.markdown("**1. 請輸入學生原始總資料夾的絕對路徑：**")
-    root_dir = st.text_input(
-        "學生總資料夾路徑：", 
-        value="", 
-        placeholder="例如：/Users/weijeliu/Desktop/code/GradeAI/學生考卷",
-        label_visibility="collapsed"
-    )
-    st.caption("💡 請複製電腦中該資料夾的完整路徑並貼到上方。")
-    st.markdown("---")
+    root_dir = st.text_input("學生總資料夾路徑：", value="", placeholder="例如：./GradeAI/學生考卷", label_visibility="collapsed")
     
+    st.markdown("---")
     st.markdown("**2. 設定統一輸出資料夾名稱：**")
-    output_dir_name = st.text_input("請輸入輸出資料夾名稱：", value="批改結果總表")
-    st.caption("💡 系統會自動在與上述學生資料夾「平行」的位置創立此資料夾。")
+    output_dir_name = st.text_input("請輸入輸出資料夾名稱：", value="批改結果PDF總表")
     
     st.markdown("---")
     st.markdown("**3. 執行優化設定：**")
-    skip_processed = st.checkbox("如果批改紀錄已存在，跳過該學生 (中斷續傳)", value=True)
+    skip_processed = st.checkbox("如果批改紀錄 (.pdf) 已存在，跳過該學生 (中斷續傳)", value=True)
 
 st.markdown("---")
 
@@ -45,9 +36,7 @@ if st.button("🚀 開始批次辨識與批改流水線", type="primary", use_co
         st.warning("⚠️ 請檢查所有欄位是否皆已填寫（包含學生資料夾路徑）。")
     else:
         try:
-            # 初始化後端引擎
             engine = GradingEngine()
-            # 讀取學生子目錄
             subdirs = FileHandler.get_student_directories(root_dir)
             
             if not subdirs:
@@ -61,24 +50,21 @@ if st.button("🚀 開始批次辨識與批改流水線", type="primary", use_co
                 for index, student_id in enumerate(subdirs):
                     status_text.text(f"⏳ 正在處理學生 ({index+1}/{len(subdirs)}): {student_id}")
                     
-                    # 讓 file_handler 處理所有狀態檢查與輸出目錄建立
-                    status, student_folder, output_txt_path, image_files = FileHandler.check_and_prepare_pipeline(
+                    status, student_folder, output_tex_path, image_files = FileHandler.check_and_prepare_pipeline(
                         root_dir, output_dir_name, student_id, skip_processed
                     )
                     
                     if status == "SKIP":
-                        log_container.write(f"⏭️ [跳過] 學號 {student_id} 的批改檔案已存在。")
+                        log_container.write(f"⏭️ [跳過] 學號 {student_id} 的 PDF 批改檔已存在。")
                         progress_bar.progress((index + 1) / len(subdirs))
                         continue
                         
                     student_answer_text = ""
                     
                     if status == "EMPTY":
-                        # 學生沒交照片，給予明確的空白提示，直接送去給 grader 批改
                         log_container.write(f"⚠️ [空資料夾] 學號 {student_id} 內無照片，將以「未作答」形式送交 AI 評分。")
                         student_answer_text = "（⚠️ 系統提示：該學生資料夾為空，未提交任何作答圖片內容。）"
                     else:
-                        # 正常執行 OCR
                         log_container.write(f"📸 [OCR] 正在辨識學號 {student_id} 的照片...")
                         try:
                             base64_list = [FileHandler.encode_image_to_base64(img) for img in image_files]
@@ -87,7 +73,6 @@ if st.button("🚀 開始批次辨識與批改流水線", type="primary", use_co
                             log_container.write(f"  ❌ [OCR 失敗] 學號 {student_id} 原因：{e}")
                             continue
 
-                    # 統一送交 AI 老師批改
                     log_container.write(f"📝 [批改] 正在依據標準批改學號 {student_id} 的考卷...")
                     try:
                         grade_result = engine.grade_answer(
@@ -97,9 +82,43 @@ if st.button("🚀 開始批次辨識與批改流水線", type="primary", use_co
                             rubric=rubric_and_answer
                         )
                         
-                        combined_content = f"==================================================\n【學生作答辨識內容 (學號: {student_id})】\n==================================================\n{student_answer_text}\n\n==================================================\n【AI 老師批改回饋】\n==================================================\n{grade_result}\n"
-                        FileHandler.write_text_file(output_txt_path, combined_content)
-                        log_container.write(f"  --> ✅ 成功生成紀錄檔：`{student_id}_完整批改紀錄.txt`")
+                        # 🚀 【核心修改】：直接在這裡將結果包裝成完整的 LaTeX 文件格式
+                        combined_content = rf"""\documentclass[12pt, a4paper]{{article}}
+\usepackage{{xeCJK}}
+\usepackage{{amsmath, amsfonts, amssymb}}
+\usepackage{{geometry}}
+\usepackage{{xcolor}}
+\usepackage[most]{{tcolorbox}}
+
+\geometry{{margin=2cm}}
+\setCJKmainfont{{PingFang TC}}[AutoFakeBold=true, FallbackFonts={{Microsoft JhengHei}}]
+
+\title{{\textbf{{考卷自動批改報告}}}}
+\author{{學號：{student_id}}}
+\date{{\today}}
+
+\begin{{document}}
+\maketitle
+
+\section*{{一、學生作答內容辨識}}
+{student_answer_text}
+
+\section*{{二、AI 老師批改回饋}}
+{grade_result}
+
+\end{{document}}
+"""
+                        # 1. 寫入 .tex 檔
+                        FileHandler.write_text_file(output_tex_path, combined_content)
+                        log_container.write(f"  --> 📄 成功生成 LaTeX 檔：`{student_id}_完整批改紀錄.tex`")
+                        
+                        # 2. 呼叫編譯產生 PDF
+                        pdf_success = FileHandler.compile_tex_to_pdf(output_tex_path)
+                        if pdf_success:
+                            log_container.write(f"  --> 🎉 ✅ 成功編譯出 PDF：`{student_id}_完整批改紀錄.pdf`")
+                        else:
+                            log_container.write(f"  --> ⚠️ `.tex` 已建立，但 `xelatex` 自動編譯成 PDF 失敗（請確認電腦是否有安裝 xelatex）。")
+                            
                         time.sleep(1)
                     except Exception as e:
                         log_container.write(f"  ❌ [批改 失敗] 學號 {student_id} 原因：{e}")
